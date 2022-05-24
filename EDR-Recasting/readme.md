@@ -32,7 +32,12 @@ So, we can simply copy the function address (RtlCreateUserThread/CreateRemoteThr
 ![Alt text](https://github.com/RedTeamOperations/Journey-to-McAfee/blob/main/EDR-Recasting/img/4.png?raw=true ":)")
  
 Local Shellcode Execution.
+
 ![Alt text](https://github.com/RedTeamOperations/Journey-to-McAfee/blob/main/EDR-Recasting/img/5.png ":)")
+
+McAfee Status
+
+![Alt text](https://github.com/RedTeamOperations/Journey-to-McAfee/blob/main/EDR-Recasting/img/6.png ":)")
 
 ## NOTE
 This is just a simple POC of utilizing the McAfee injected dll’s functions. This is specially crafted implant for McAfee environment only. It depends on a McAfee environment so analyst will have a hard time during static analysis of the binary if combined with string encryption. However, this technique has both advantages and disadvantages. 
